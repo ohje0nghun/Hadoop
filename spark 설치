@@ -1,0 +1,162 @@
+설치 총정리:
+
+ 
+
+1. oracle 의 홉디렉토리로 이동합니다.
+
+[oracle@centos ~]$ cd 
+
+2. 설치 파일을 다운로드 받는다. 
+
+[oracle@centos ~]$ wget https://archive.apache.org/dist/spark/spark-2.0.2/spark-2.0.2-bin-hadoop2.7.tgz
+
+3. 압축을 풉니다.
+
+[oracle@centos ~]$ tar xvzf spark-2.0.2-bin-hadoop2.7.tgz
+
+4. 압축을 풀고 생긴 디렉토리의 이름을 spark 로 변경합니다.
+
+[oracle@centos ~]$ mv spark-2.0.2-bin-hadoop2.7  spark
+
+5. .bash_profile 를 열어서 맨 아래에 아래의 export 문을 입력합니다.
+
+[oracle@centos ~]$ vi .bash_profile
+
+export PATH=$PATH:/home/oracle/spark/bin:$PATH
+
+6. .bash_profile 을 수행합니다.
+
+[oracle@centos ~]$ source .bash_profile 
+
+7. spark에서 사용할 employee.txt 를 생성합니다. 
+
+[oracle@centos ~]$ vi employee.txt
+
+ 
+
+1201,satish,25
+1202,krishna,28
+1203,amith,39
+1204,javed,23
+1205,prudvi,23
+
+
+[oracle@centos ~]$ pwd
+/home/oracle
+
+
+[oracle@centos ~]$ cat employee.txt
+1201,satish,25
+1202,krishna,28
+1203,amith,39
+1204,javed,23
+1205,prudvi,23
+
+8. spark-shell 로 접속하여 테이블 생성을 하고 select 합니다. 
+
+
+[oracle@centos ~]$ spark-shell
+Using Spark's default log4j profile: org/apache/spark/log4j-defaults.properties
+Setting default log level to "WARN".
+To adjust logging level use sc.setLogLevel(newLevel).
+21/01/09 08:54:43 WARN NativeCodeLoader: Unable to load native-hadoop library for your platform... using builtin-java classes where applicable
+21/01/09 08:54:43 WARN Utils: Your hostname, localhost.localdomain resolves to a loopback address: 127.0.0.1; using 10.0.2.15 instead (on interface enp0s3)
+21/01/09 08:54:43 WARN Utils: Set SPARK_LOCAL_IP if you need to bind to another address
+21/01/09 08:54:45 WARN SparkContext: Use an existing SparkContext, some configuration may not take effect.
+Spark context Web UI available at http://10.0.2.15:4040
+Spark context available as 'sc' (master = local[*], app id = local-1610200485296).
+Spark session available as 'spark'.
+Welcome to
+      ____              __
+     / __/__  ___ _____/ /__
+    _\ \/ _ \/ _ `/ __/  '_/
+   /___/ .__/\_,_/_/ /_/\_\   version 2.0.2
+      /_/
+         
+Using Scala version 2.11.8 (OpenJDK 64-Bit Server VM, Java 1.8.0_262)
+Type in expressions to have them eval‎‎uated.
+Type :help for more information.
+
+설명:  테이블 생성전에 아래의 명령어를 실행해야 합니다.지금부터 SQL 사용하겠다 라고 지정 합니다.
+
+scala> val sqlContext = new org.apache.spark.sql.hive.HiveContext(sc)
+
+warning: there was one deprecation warning; re-run with -deprecation for details
+sqlContext: org.apache.spark.sql.hive.HiveContext = org.apache.spark.sql.hive.HiveContext@66b0e207
+
+설명:  OS 에 저장한 employee.txt 데이터를 저장할 테이블을 생성합니다.
+
+scala> sqlContext.sql("CREATE TABLE IF NOT EXISTS employee (id INT, name STRING, age INT) ROW FORMAT DELIMITED FIELDS TERMINATED BY ','  LINES TERMINATED BY '\n'")
+
+
+설명: os 의 employee.txt 파일을 employee 에 로드 합니다.
+
+scala> sqlContext.sql("LOAD DATA LOCAL INPATH 'employee.txt' INTO TABLE employee")
+
+설명: employee 테이블에서 id 와 name과 age 를 조회합니다.
+
+scala> val result = sqlContext.sql("FROM employee SELECT id, name, age")
+
+설명: result 에 입력된 결과를 출력합니다. 
+
+scala>  result.show()
++----+-------+---+
+|  id|   name|age|
++----+-------+---+
+|1201| satish| 25|
+|1202|krishna| 28|
+|1203|  amith| 39|
+|1204|  javed| 23|
+|1205| prudvi| 23|
++----+-------+---+
+
+설명: 위에 처럼 result 라는 변수에 담지 않고 바로 sql 을 실행하고 싶다면 아래와 같이 수행하세요 !
+
+scala> sql("select * from employee").show()
++----+-------+---+ 
+|  id|   name|age| 
++----+-------+---+ 
+|1201| satish| 25| 
+|1202|krishna| 28| 
+|1203|  amith| 39| 
+|1204|  javed| 23| 
+|1205| prudvi| 23| 
++----+-------+---+ 
+
+문제1. id 가 1202 인 사원의 이름과 나이를 출력하시오 !
+
+scala> sql("select * from employee where  id=1202").show()
+
+문제2. 이름이 satish 인 사원의 이름과 나이를 출력하시오 !
+
+scala> sql("select * from employee where  name='satish'").show()
+
+
+설치 시 에러사항
+
+이슈:
+spark 실행 후 아래 내용 타이핑 이후 
+
+$ sqlContext.sql("CREATE TABLE IF NOT EXISTS employee (id INT, name STRING, age INT) ROW FORMAT DELIMITED FIELDS TERMINATED BY ','  LINES TERMINATED BY '\n'")
+ 
+
+해당 에러 발생 시
+
+-> Failed to start database 'metastore_db' with class loader 
+ 
+
+
+해결:
+
+#oracle 유저에서 실행
+
+cd /home/oracle
+ls -l |grep metastore_db
+-> 해당 파일이 존재해야 함, 없으면 스파크 다시 설치
+
+rm metastore_db/dbex.lck
+위 작업 이후 다시 위 작업 실행
+
+
+
+
