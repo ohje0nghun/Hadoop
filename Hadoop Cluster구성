@@ -1,0 +1,466 @@
+#Hadoop 고가용성 클러스터 구성을 다룹니다.
+
+hadoop 클러스터 서버 역할
+
+namenode1: 액티브 네임노드, 저널노드 역할
+rmnode1: 스탠바이 네임노드, 리소스 매니저, 저널노드 역할, 데이터 노드 역할
+datanode1: 저널노드 역할, 데이터 노드 역할
+datanode2: 데이터 노드 역할
+
+
+*구성 서버정보
+
+172.30.1.97 namenode 1
+172.30.1.98 rmnode1       --secondnamenode
+172.30.1.99 datanode1
+
+#서버 PING 체크
+각 서버에 ping이 가는지 체크
+
+
+#hosts파일 수정
+
+vi /etc/hosts
+172.30.1.97 namenode 1
+172.30.1.98 rmnode1      
+172.30.1.99 datanode1
+
+#방화벽 제거
+systemctl stop firewalld && systemctl disable firewalld
+systemctl status firewalld
+
+
+#SELINUX 비활성화
+sed -i 's/SELINUX=enforcing/SELINUX=permissive/g' /etc/selinux/config
+setenforce permissive
+
+
+#ssh 설정
+ssh-keygen  
+
+이후 모든 노드에서 ssh 공개키 설정
+namenode1
+ssh-copy-id -i .ssh/id_rsa.pub root@rmnode1
+ssh-copy-id -i .ssh/id_rsa.pub root@datanode1
+
+
+rmnode1
+ssh-copy-id -i .ssh/id_rsa.pub root@namenode1
+ssh-copy-id -i .ssh/id_rsa.pub root@datanode1
+
+
+datanode1
+ssh-copy-id -i .ssh/id_rsa.pub root@namenode1
+ssh-copy-id -i .ssh/id_rsa.pub root@rmnode1
+
+
+*해당 설정후 각 서버에서 패스워드 없이 연결되는지 확인
+
+
+#JAVA 설치(1.8)
+yum install -y java-1.8.0-openjdk-devel.x86_64
+
+#JAVA 환경변수 등록
+export JAVA_HOME=/usr/lib/jvm/java-1.8.0-openjdk-1.8.0.392.b08-2.el7_9.x86_64
+export PATH=$PATH:$JAVA_HOME/bin
+
+
+#Zookeeper 계정생성(namenode1, rmnode1, datanode1에만 진행)
+
+useradd zookeeper
+passwd zookeeper
+
+
+#hadoop 계정생성(모든노드)
+useradd hadoop
+passwd hadoop
+
+
+#hadoop 계정 권한 설정
+mkdir /dfs
+mkdir /yarn
+mkdir /pids
+
+chown hadoop /dfs
+chgrp hadoop /dfs
+chown hadoop /yarn
+chgrp hadoop /yarn
+chown hadoop /pids
+chgrp hadoop /pids
+
+
+#zookeeper 계정 ssh 공개키 설정
+
+ssh-keygen
+
+namenode1
+ssh-copy-id -i .ssh/id_rsa.pub zookeeper@rmnode1
+ssh-copy-id -i .ssh/id_rsa.pub zookeeper@datanode1
+
+
+rmnode1
+ssh-copy-id -i .ssh/id_rsa.pub zookeeper@namenode1
+ssh-copy-id -i .ssh/id_rsa.pub zookeeper@datanode1
+
+
+datanode1
+ssh-copy-id -i .ssh/id_rsa.pub zookeeper@namenode1
+ssh-copy-id -i .ssh/id_rsa.pub zookeeper@rmnode1
+
+
+#hadoop 계정 ssh 공개키 설정
+
+ssh-keygen
+
+namenode1
+ssh-copy-id -i .ssh/id_rsa.pub hadoop@rmnode1
+ssh-copy-id -i .ssh/id_rsa.pub hadoop@datanode1
+
+
+rmnode1
+ssh-copy-id -i .ssh/id_rsa.pub hadoop@namenode1
+ssh-copy-id -i .ssh/id_rsa.pub hadoop@datanode1
+
+
+datanode1
+ssh-copy-id -i .ssh/id_rsa.pub hadoop@namenode1
+ssh-copy-id -i .ssh/id_rsa.pub hadoop@rmnode1
+
+
+#zookeeper 설치
+
+su - zookeeper
+
+
+!아래과정은 namenode1에서 작업 후 다른 노드에 scp로 배포
+
+*파일다운
+wget https://archive.apache.org/dist/zookeeper/zookeeper-3.4.10/zookeeper-3.4.10.tar.gz
+
+tar xvfz zookeeper-3.4.10.tar.gz
+cd /home/zookeeper/zookeeper-3.4.10/conf
+
+cp zoo_sample.cfg zoo.cfg
+
+아래내용 복사
+vi zoo.cfg
+
+tickTime=2000
+initLimit=10
+syncLimit=5
+dataDir=/home/zookeeper/data
+clientPort=2181
+maxClientCnxns=0
+maxSessionTimeout=180000
+server.1=namenode1:2888:3888
+server.2=rmnode1:2888:3888
+server.3=datanode1:2888:3888
+
+위작업까지 진행했으면 폴더 압축해서 다른 노드 전달
+
+tar cvfz zookeeper-set.tar.gz zookeeper-3.4.10
+
+scp zookeeper-set.tar.gz zookeeper@rmnode1:/home/zookeeper
+scp zookeeper-set.tar.gz zookeeper@datanode1:/home/zookeeper
+
+
+#myid 지정(namenode1, rmnode1, datadnode1만)
+
+mkdir data
+cd data
+
+vi myid
+namenode는 1, rm은 2 datanode는 3 적고 저장
+
+
+
+#zookeeper 서버 실행(namenode1, rmnode1, datadnode1만)
+
+cd zookeeper-3.4.10
+./bin/zkServer.sh start
+./bin/zkServer.sh status
+
+모든 노드에 잘 떠야함
+
+&아래 에러 발생 시 해결
+Error contacting service. It is probably not running.
+
+zookeeper 설정파일인 zoo.cfg 에서 dataDir이 재대로 설정되었는지 확인!
+
+
+
+
+#hadoop 2.7 다운로드(namenode1만)
+
+su - hadoop
+wget https://archive.apache.org/dist/hadoop/core/hadoop-2.7.0/hadoop-2.7.0.tar.gz
+tar xvfz hadoop-2.7.0.tar.gz
+
+
+#hadoop 설정
+
+cd /home/hadoop/hadoop-2.7.0/etc/hadoop
+
+
+
+vi slaves
+아래내용으로 설정
+
+#localhost
+rmnode1
+datanode1
+
+
+
+vi core-site.xml
+아래내용 추가
+
+<configuration>
+ <property>
+    <name>fs.defaultFS</name>
+    <value>hdfs://mycluster</value>
+  </property>
+  <property>
+    <name>ha.zookeeper.quorum</name>
+    <value>namenode1:2181,rmnode1:2181,datanode1:2181</value>
+  </property>
+</configuration>
+
+
+vi hdfs-site.xml
+아래내용 추가
+
+<configuration>
+  <property>
+    <name>dfs.namenode.name.dir</name>
+    <value>/dfs/namenode</value>
+  </property>
+  <property>
+    <name>dfs.datanode.name.dir</name>
+    <value>/dfs/datanode</value>
+  </property>
+  <property>
+    <name>dfs.journalnode.edits.dir</name>
+    <value>/dfs/journalnode</value>
+  </property>
+  <property>
+    <name>dfs.nameservices</name>
+    <value>mycluster</value>
+  </property>
+  <property>
+    <name>dfs.ha.namenodes.mycluster</name>
+    <value>namenode1,rmnode1</value>
+  </property>
+  <property>
+    <name>dfs.namenode.rpc-address.mycluster.namenode1</name>
+    <value>namenode1:8020</value>
+  </property>
+  <property>
+    <name>dfs.namenode.rpc-address.mycluster.rmnode1</name>
+    <value>rmnode1:8020</value>
+  </property>
+  <property>
+    <name>dfs.namenode.http-address.mycluster.namenode1</name>
+    <value>namenode1:9870</value>
+  </property>
+  <property>
+    <name>dfs.namenode.http-address.mycluster.rmnode1</name>
+    <value>rmnode1:9870</value>
+  </property>
+  <property>
+    <name>dfs.namenode.shared.edits.dir</name>
+    <value>qjournal://namenode1:8485;rmnode1:8485;datanode1:8485/mycluster</value>
+  </property>
+  <property>
+    <name>dfs.ha.automatic-failover.enabled</name>
+    <value>true</value>
+  </property>
+  <property>
+    <name>dfs.ha.fencing.methods</name>
+    <value>sshfence</value>
+  </property>
+  <property>
+    <name>dfs.ha.fencing.ssh.private-key-files</name>
+    <value>/home/hadoop/.ssh/id_rsa</value>
+  </property>
+</configuration>
+
+
+
+vi mapred-site.xml
+아래내용 추가
+
+<configuration>
+  <property>
+    <name>mapreduce.framework.name</name>
+    <value>yarn</value>
+  </property>
+  <property>
+    <name>mapreduce.map.memory.mb</name>
+    <value>4096</value>
+  </property>
+  <property>
+    <name>mapreduce.map.java.opts</name>
+    <value>-Xmx3072m</value>
+  </property>
+  <property>
+    <name>mapreduce.reduce.java.opts</name>
+    <value>-Xmx6144m</value>
+  </property>
+</configuration>
+
+
+vi yarn-site.xml
+아래내용 추가
+
+<configuration>
+  <property>
+    <name>yarn.nodemanager.aux-services</name>
+    <value>mapreduce_shuffle</value>
+  </property>
+  <property>
+    <name>yarn.nodemanager.aux-services.mapreduce_shuffle.class</name>
+    <value>org.apache.hadoop.mapred.ShuffleHandler</value>
+  </property>
+  <property>
+    <name>yarn.nodemanager.local-dirs</name>
+    <value>/yarn/nm-local-dir</value>
+  </property>
+  <property>
+    <name>yarn.resourcemanager.fs.state-store.uri</name>
+    <value>/yarn/system/rmstore</value>
+  </property>
+  <property>
+    <name>yarn.resourcemanager.hostname</name>
+    <value>rmnode1</value>
+  </property>
+  <property>
+    <name>yarn.resourcemanager.address</name>
+    <value>rmnode1:8032</value>
+  </property>
+  <property>
+    <name>yarn.application.classpath</name>
+    <value>
+       /home/hadoop/hadoop-2.7.0/etc/hadoop,
+       /home/hadoop/hadoop-2.7.0/share/hadoop/common/*,
+       /home/hadoop/hadoop-2.7.0/share/hadoop/common/lib/*,
+       /home/hadoop/hadoop-2.7.0/share/hadoop/hdfs/*,
+       /home/hadoop/hadoop-2.7.0/share/hadoop/hdfs/lib/*,
+       /home/hadoop/hadoop-2.7.0/share/hadoop/mapreduce/*,
+       /home/hadoop/hadoop-2.7.0/share/hadoop/mapreduce/lib/*,
+       /home/hadoop/hadoop-2.7.0/share/hadoop/yarn/*,
+       /home/hadoop/hadoop-2.7.0/share/hadoop/yarn/lib/*
+   </value>
+  </property>
+</configuration>
+
+
+
+vi hadoop-env.sh
+
+
+*JAVA_HOME 찾아서 아래로 수정
+export JAVA_HOME=/usr/lib/jvm/java-1.8.0-openjdk-1.8.0.392.b08-2.el7_9.x86_64
+
+*HADOOP_PID_DIR 찾아서 pid 경로 입력
+export HADOOP_PID_DIR=/pids
+
+
+#설정한 hadoop 파일 압축 후 다른 노드에 배포 후 압축해제
+scp hadoop-2.7.0-set.tar.gz hadoop@rmnode1:/home/hadoop
+scp hadoop-2.7.0-set.tar.gz hadoop@datanode1:/home/hadoop
+
+
+tar xvfz hadoop-2.7.0-set.tar.gz
+
+
+#root계정에서 /etc/profile 수정 후 컴파일
+
+vi /etc/profile
+아래 내용 추가
+
+export JAVA_HOME=/usr/lib/jvm/java-1.8.0-openjdk-1.8.0.392.b08-2.el7_9.x86_64
+export PATH=$PATH:$JAVA_HOME/bin
+
+export HADOOP_HOME=/home/hadoop/hadoop-2.7.0
+export PATH=$PATH:$HADOOP_HOME/bin
+export PATH=$PATH:$HADOOP_HOME/sbin
+
+
+source /etc/profile
+
+
+
+#hadoop 실행(zookeeper가 모든 클러스터에 정상인지 확인합니다.)
+
+
+#zookeeper 장애 컨트롤러 초기화(namenode1만 최초 한번만 실행)
+
+su hadoop
+cd hadoop-3.1.0
+./bin/hdfs zkfc -formatZK
+
+
+#journal node를 실행하기(namenode1, rmnode1, datanode1에서만)
+./bin/hdfs journalnode &
+
+
+#namenode 초기화(namenode1만 최초 한번만 실행)
+./bin/hdfs namenode -format mycluster
+
+
+#active namenode 실행(namenode1만)
+./bin/hdfs namenode &
+
+
+
+#액티브 네임노드(active namenode)용 주키퍼 장애 컨트롤러(zkfc)를 실행(namenode1만)
+./bin/hdfs zkfs &
+
+
+
+#데이터 노드 실행(namenode1만)
+hdfs --workers --daemon start datanode
+
+
+#standby namenode 포맷(rmnode1만 최초 한번만 실행)
+./bin/hdfs namenode -bootstrapStandby
+
+
+
+#standby namenode 실행(rmnode1만)
+./bin/hdfs --daemon start namenode
+
+
+# standby namenode용 주키퍼 장애 컨트롤러(zkfc)실행(rmnode1만)
+./bin/hdfs --daemon start zkfc
+
+
+#yarn cluster 실행(rmnode1만)
+./sbin/start-yarn.sh
+
+
+#active stanby namenode 확인(namenode1만)
+./bin/hdfs haadmin -getServiceState namenode1
+./bin/hdfs haadmin -getServiceState rmnode1
+
+
+위작업 끝내면 jps 로 실행
+
+이후 작업 start-all.sh 와 stop-all.sh로 전부 실행시키고 끄기
+
+stop-all.sh
+start-all.sh
+
+
+
+
+
+
+
+
+
+
+
+
+
